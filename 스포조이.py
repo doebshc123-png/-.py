@@ -32,7 +32,6 @@ TELEGRAM_TOKEN = "7713068391:AAFIOAa_olH-FHzrIJsDsgDQXGMZ0FW5PUE"
 CHAT_ID = "-5420806624"
 
 # 각 경기별 최근 선발투수 상태 저장 딕셔너리
-# 구조: { "경기ID": ("원정선발투수", "홈선발투수") }
 KNOWN_PITCHERS = {}
 
 # ==========================================
@@ -102,15 +101,12 @@ def check_and_notify_pitchers():
             away_p = p_matches[0] if len(p_matches) >= 1 else "미정"
             home_p = p_matches[1] if len(p_matches) >= 2 else "미정"
             
-            # 둘 다 미정이면 처리 스킵
             if away_p == "미정" and home_p == "미정":
                 continue
                 
-            # 경기 고유 키 생성 (테이블 순서 기준)
             game_id = f"GAME_{idx}"
             current_status = (away_p, home_p)
             
-            # [상태 1] 최초 선발투수 발표 시
             if game_id not in KNOWN_PITCHERS:
                 KNOWN_PITCHERS[game_id] = current_status
                 
@@ -130,10 +126,9 @@ def check_and_notify_pitchers():
                 if send_telegram(msg):
                     print(f"✅ [최초 발표] 텔레그램 전송 완료 ({away_p} vs {home_p})")
 
-            # [상태 2] 기존 선발투수가 변경된 경우
             elif KNOWN_PITCHERS[game_id] != current_status:
                 prev_away, prev_home = KNOWN_PITCHERS[game_id]
-                KNOWN_PITCHERS[game_id] = current_status  # 변경된 상태 업데이트
+                KNOWN_PITCHERS[game_id] = current_status
                 
                 away_p_name, away_season, away_l10 = parse_pitcher_info(away_p, full_text, full_text)
                 home_p_name, home_season, home_l10 = parse_pitcher_info(home_p, full_text, full_text)
@@ -153,26 +148,16 @@ def check_and_notify_pitchers():
                 if send_telegram(msg):
                     print(f"🔄 [선발 변경 감지] 텔레그램 전송 완료 ({prev_away}vs{prev_home} -> {away_p}vs{home_p})")
 
-            # [상태 3] 선발투수 변동 없음
             else:
-                pass  # 동일한 경우 메시지를 보내지 않음
+                pass
 
     except Exception as e:
         print(f"❌ 모니터링 중 오류 발생: {e}")
 
 # ==========================================
-# 5. 백그라운드 반복 실행 (5분 주기)
+# 5. 실행부 (GitHub Actions 전용 1회 실행)
 # ==========================================
 if __name__ == "__main__":
-    CHECK_INTERVAL_SECONDS = 300  # 300초 = 5분 간격 모니터링
-    
-    print("🚀 스포조이 실시간 선발투수 변경 감지기를 시작합니다.")
-    print(f"⏱️ {CHECK_INTERVAL_SECONDS // 60}분 마다 체크하며 최초 발표 및 선발 변경 시 알림을 전송합니다.\n")
-    
-    while True:
-        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{now_str}] 선발투수 등록 및 변경 여부 확인 중...")
-        
-        check_and_notify_pitchers()
-        
-        time.sleep(CHECK_INTERVAL_SECONDS)
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now_str}] 선발투수 등록 및 변경 여부 확인 중...")
+    check_and_notify_pitchers()
