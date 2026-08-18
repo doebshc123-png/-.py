@@ -1,6 +1,8 @@
 import re
 import ssl
 import time
+import json
+import os
 import requests
 import urllib3
 from datetime import datetime, timezone, timedelta
@@ -11,7 +13,14 @@ from urllib3.util.ssl_ import create_urllib3_context
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 0. SSL 레거시 연결 어댑터
+# 0. 설정 정보
+# ==========================================
+TELEGRAM_TOKEN = "7713068391:AAFIOAa_olH-FHzrIJsDsgDQXGMZ0FW5PUE"
+CHAT_ID = "-5420806624"
+CACHE_FILE = "pitcher_cache.json"
+
+# ==========================================
+# 1. SSL 레거시 연결 어댑터
 # ==========================================
 class LegacySSLAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
@@ -27,16 +36,33 @@ class LegacySSLAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 # ==========================================
-# 1. 설정 정보
+# 2. 캐시(기억) 파일 읽기/쓰기 함수 (날짜 체크 포함)
 # ==========================================
-TELEGRAM_TOKEN = "7713068391:AAFIOAa_olH-FHzrIJsDsgDQXGMZ0FW5PUE"
-CHAT_ID = "-5420806624"
+def load_cache(today_str):
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # 저장된 날짜가 오늘 날짜와 다르면 캐시 초기화 (날짜가 바뀐 경우)
+                if data.get("date") == today_str:
+                    return data.get("pitchers", {})
+        except Exception:
+            return {}
+    return {}
 
-# 각 경기별 최근 선발투수 상태 저장 딕셔너리
-KNOWN_PITCHERS = {}
+def save_cache(today_str, pitchers_data):
+    try:
+        data = {
+            "date": today_str,
+            "pitchers": pitchers_data
+        }
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"❌ 캐시 저장 오류: {e}")
 
 # ==========================================
-# 2. 스탯 파싱 함수
+# 3. 스탯 파싱 함수
 # ==========================================
 def parse_pitcher_info(pitcher_name, raw_season_text="", raw_l10_text=""):
     p_name = pitcher_name.strip() if pitcher_name else "미정"
@@ -61,7 +87,7 @@ def parse_pitcher_info(pitcher_name, raw_season_text="", raw_l10_text=""):
     return p_name, fmt_season(season_match), fmt_l10(l10_match)
 
 # ==========================================
-# 3. 텔레그램 전송 함수
+# 4. 텔레그램 전송 함수
 # ==========================================
 def send_telegram(message):
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -74,9 +100,12 @@ def send_telegram(message):
         return False
 
 # ==========================================
-# 4. 실시간 모니터링 및 변경 감지 함수
+# 5. 모니터링 및 상태 비교 함수
 # ==========================================
 def check_and_notify_pitchers():
+    kst = timezone(timedelta(hours=9))
+    today_str = datetime.now(kst).strftime("%Y-%m-%d")
+    
     url = "https://www.spojoy.com/baseball/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -84,6 +113,9 @@ def check_and_notify_pitchers():
     
     session = requests.Session()
     session.mount("https://", LegacySSLAdapter())
+    
+    known_pitchers = load_cache(today_str)  # 오늘 날짜 기준 캐시 불러오기
+    updated = False
     
     try:
         res = session.get(url, headers=headers, verify=False, timeout=15)
@@ -106,16 +138,18 @@ def check_and_notify_pitchers():
                 continue
                 
             game_id = f"GAME_{idx}"
-            current_status = (away_p, home_p)
+            current_status = [away_p, home_p]
             
-            if game_id not in KNOWN_PITCHERS:
-                KNOWN_PITCHERS[game_id] = current_status
+            # [상태 1] 최초 선발투수 발표 시 (또는 날짜가 바뀌어 새로 리셋된 경우)
+            if game_id not in known_pitchers:
+                known_pitchers[game_id] = current_status
+                updated = True
                 
                 away_p_name, away_season, away_l10 = parse_pitcher_info(away_p, full_text, full_text)
                 home_p_name, home_season, home_l10 = parse_pitcher_info(home_p, full_text, full_text)
                 
                 msg = (
-                    f"📢 [선발투수 발표 알림]\n\n"
+                    f"📢 [선발투수 발표 알림 ({today_str})]\n\n"
                     f"• 원정 선발: {away_p_name}\n"
                     f"  - {away_season}\n"
                     f"  - {away_l10}\n\n"
@@ -127,15 +161,17 @@ def check_and_notify_pitchers():
                 if send_telegram(msg):
                     print(f"✅ [최초 발표] 텔레그램 전송 완료 ({away_p} vs {home_p})")
 
-            elif KNOWN_PITCHERS[game_id] != current_status:
-                prev_away, prev_home = KNOWN_PITCHERS[game_id]
-                KNOWN_PITCHERS[game_id] = current_status
+            # [상태 2] 기존 선발투수가 변경된 경우
+            elif known_pitchers[game_id] != current_status:
+                prev_away, prev_home = known_pitchers[game_id]
+                known_pitchers[game_id] = current_status
+                updated = True
                 
                 away_p_name, away_season, away_l10 = parse_pitcher_info(away_p, full_text, full_text)
                 home_p_name, home_season, home_l10 = parse_pitcher_info(home_p, full_text, full_text)
                 
                 msg = (
-                    f"🔄 [선발투수 변경 알림]\n"
+                    f"🔄 [선발투수 변경 알림 ({today_str})]\n"
                     f"⚠️ 이전 선발: {prev_away} vs {prev_home}\n"
                     f"➡️ 변경 선발: {away_p} vs {home_p}\n\n"
                     f"• 원정 선발: {away_p_name}\n"
@@ -152,14 +188,16 @@ def check_and_notify_pitchers():
             else:
                 pass
 
+        if updated:
+            save_cache(today_str, known_pitchers)
+
     except Exception as e:
         print(f"❌ 모니터링 중 오류 발생: {e}")
 
 # ==========================================
-# 5. 실행부 (한국 시간 KST 적용)
+# 6. 실행부
 # ==========================================
 if __name__ == "__main__":
-    # 한국 시간(UTC+9) 설정
     kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S")
     
