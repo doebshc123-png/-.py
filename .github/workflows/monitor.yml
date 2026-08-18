@@ -2,12 +2,15 @@ name: Spojoy Pitcher Monitor
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # 10분마다 실행
-  workflow_dispatch:        # 수동 실행 버튼 활성화
+    - cron: '*/10 * * * *'  # 👈 이 부분이 있어야 10분마다 자동으로 돕니다!
+  workflow_dispatch:        # 👈 이게 있어야 수동 실행(버튼)도 됩니다.
 
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - name: 코드 불러오기
         uses: actions/checkout@v4
@@ -15,7 +18,7 @@ jobs:
       - name: 파이썬 설치
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: 크롤링 도구 설치
         run: |
@@ -24,3 +27,9 @@ jobs:
 
       - name: 스크립트 실행
         run: python 스포조이.py
+
+      - name: 변경된 선발투수 캐시 파일 자동 저장
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto update pitcher cache"
+          file_pattern: pitcher_cache.json
