@@ -3,6 +3,7 @@ import ssl
 import time
 import requests
 import urllib3
+from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
@@ -155,9 +156,12 @@ def check_and_notify_pitchers():
         print(f"❌ 모니터링 중 오류 발생: {e}")
 
 # ==========================================
-# 5. 실행부 (GitHub Actions 전용 1회 실행)
+# 5. 실행부 (한국 시간 KST 적용)
 # ==========================================
 if __name__ == "__main__":
-    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now_str}] 선발투수 등록 및 변경 여부 확인 중...")
+    # 한국 시간(UTC+9) 설정
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S")
+    
+    print(f"[{now_kst}] 선발투수 등록 및 변경 여부 확인 중...")
     check_and_notify_pitchers()
